@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fmt, io, mem, process, slice, thread};
 
-use nix::{ioctl_write_int, ioctl_write_ptr};
 use argh::FromArgs;
+use nix::{ioctl_write_int, ioctl_write_ptr};
 
 /// Force-feedback device path.
 const DEVICE_PATH: &str = "/dev/input/by-path/platform-vibrator-event";
