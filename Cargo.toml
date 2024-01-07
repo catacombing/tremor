@@ -1,0 +1,19 @@
+[package]
+name = "tremor"
+version = "0.1.0"
+description = "Force-feedback device control utility"
+authors = ["Christian Duerr <contact@christianduerr.com>"]
+repository = "https://github.com/catacombing/tremor"
+rust-version = "1.75.0"
+license = "GPL-3.0"
+edition = "2021"
+
+[dependencies]
+argh = "0.1.12"
+libc = "0.2.151"
+nix = { version = "0.27.1", features = ["ioctl"] }
+
+[profile.release]
+lto = "thin"
+panic = "abort"
+strip = true
