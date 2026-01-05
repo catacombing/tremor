@@ -11,7 +11,7 @@ build: ## Build the executable with Rust's default options
 	@echo "Wrote executable to target/release/$(APP_NAME)"
 
 small: ## Build a minimal binary (requirest nightly Rust)
-	@cargo +nightly build -Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort --target $(TARGET) --release
+	@cargo +nightly build -Z build-std=std -Z panic-immediate-abort --config 'profile.release.panic="immediate-abort"' --target $(TARGET) --release
 	@echo "Wrote executable to target/$(TARGET)/release/$(APP_NAME)"
 
 clean: ## Remove all build artifacts
