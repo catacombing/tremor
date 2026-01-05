@@ -6,6 +6,7 @@ use std::time::Duration;
 use std::{fmt, io, mem, process, slice, thread};
 
 use argh::FromArgs;
+use nix::sys::ioctl::ioctl_param_type;
 use nix::{ioctl_write_int, ioctl_write_ptr};
 
 /// Force-feedback device path.
@@ -63,9 +64,9 @@ impl Vibrator {
     }
 
     /// Stop vibration and remove effect from device.
-    fn stop(&mut self, effect_id: u64) -> Result<(), String> {
+    fn stop(&mut self, effect_id: u16) -> Result<(), String> {
         let fd = self.device.as_raw_fd();
-        match unsafe { remove_effect(fd, effect_id) } {
+        match unsafe { remove_effect(fd, effect_id as ioctl_param_type) } {
             Ok(_) => Ok(()),
             Err(_) => {
                 let last_error = io::Error::last_os_error();
@@ -93,16 +94,21 @@ impl Vibrator {
         };
 
         // Upload effect to the device.
-        match unsafe { upload_effect(self.device.as_raw_fd(), &mut effect as *const _) } {
-            Err(err) => return Err(format!("Failed to upload rumble effect: {err}")),
-            Ok(_) if effect.id < 0 => return Err(format!("Invalid rumble effect ID: {effect:?}")),
-            Ok(_) => (),
+        let result = unsafe { upload_effect(self.device.as_raw_fd(), &mut effect as *const _) };
+        if let Err(err) = result {
+            return Err(format!("Failed to upload rumble effect: {err}"));
         }
+
+        // Ensure effect ID was set to a positive integer.
+        let effect_id = match u16::try_from(effect.id) {
+            Ok(effect_id) => effect_id,
+            Err(_) => return Err(format!("Invalid rumble effect ID: {effect:?}")),
+        };
 
         // Play effect `count` times.
         let play = libc::input_event {
             time: libc::timeval { tv_sec: 0, tv_usec: 0 },
-            code: effect.id as u16,
+            code: effect_id,
             value: count as i32,
             type_: EV_FF,
         };
@@ -116,7 +122,7 @@ impl Vibrator {
         // Remove effect after it finished playing.
         let duration = Duration::from_millis(((length + interval) * count) as u64);
         thread::sleep(duration);
-        self.stop(effect.id as u64)?;
+        self.stop(effect_id)?;
 
         Ok(())
     }
