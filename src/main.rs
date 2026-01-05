@@ -1,4 +1,4 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -7,14 +7,15 @@ use std::{fmt, io, mem, process, slice, thread};
 
 use argh::FromArgs;
 use nix::sys::ioctl::ioctl_param_type;
-use nix::{ioctl_write_int, ioctl_write_ptr};
+use nix::{ioctl_read, ioctl_write_int, ioctl_write_ptr};
 
-/// Force-feedback device path.
-const DEVICE_PATH: &str = "/dev/input/by-path/platform-vibrator-event";
-
-/// Force-feedback event type constant.
-/// <https://github.com/torvalds/linux/blob/9f4211bf7f811b653aa6acfb9aea38222436a458/include/uapi/linux/input-event-codes.h#L47>
+// Force-feedback event type constants.
+// <https://github.com/torvalds/linux/blob/9f4211bf7f811b653aa6acfb9aea38222436a458/include/uapi/linux/input-event-codes.h#L47>
 const EV_FF: u16 = 0x15;
+const FF_RUMBLE: u16 = 0x50;
+
+/// Length of the force-feedback capabilities array.
+const FEATURES_LEN: usize = (libc::FF_CNT - 1) / (8 * mem::size_of::<libc::c_ulong>()) + 1;
 
 /// Force-feedback device control utility.
 #[derive(FromArgs, Default)]
@@ -36,12 +37,20 @@ pub struct Cli {
 fn main() {
     let cli: Cli = argh::from_env();
 
-    let path = cli.device_path.unwrap_or_else(|| DEVICE_PATH.into());
-    let mut vibrator = match Vibrator::new(&path) {
-        Ok(vibrator) => vibrator,
-        Err(err) => {
-            eprintln!("Error: Could not open device {path:?}: {err}");
-            process::exit(1);
+    let mut vibrator = match cli.device_path {
+        Some(device_path) => match Vibrator::new(&device_path) {
+            Ok(vibrator) => vibrator,
+            Err(err) => {
+                eprintln!("Error: Could not open device {device_path:?}: {err}");
+                process::exit(1);
+            },
+        },
+        None => match Vibrator::search() {
+            Some(vibrator) => vibrator,
+            None => {
+                eprintln!("Error: No force-feedback device found");
+                process::exit(1);
+            },
         },
     };
 
@@ -61,6 +70,56 @@ pub struct Vibrator {
 impl Vibrator {
     fn new(device_path: &Path) -> Result<Self, io::Error> {
         Ok(Self { device: File::options().append(true).open(device_path)? })
+    }
+
+    /// Search /dev/input for a device with vibration capabilities.
+    fn search() -> Option<Self> {
+        let input_dir = fs::read_dir("/dev/input")
+            .inspect_err(|err| eprintln!("Warn: Could not read /dev/input: {err}"))
+            .ok()?;
+
+        for entry in input_dir {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    eprintln!("Warn: Could not access /dev/input entry: {err}");
+                    continue;
+                },
+            };
+
+            // Ignore files other than `/dev/input/event*`.
+            let path = entry.path();
+            let file_name = path.file_name().and_then(|name| name.to_str());
+            if file_name.is_none_or(|name| !name.starts_with("event")) {
+                continue;
+            }
+
+            // Open file to get its FD.
+            let file = match File::options().append(true).open(&path) {
+                Ok(file) => file,
+                Err(err) => {
+                    eprintln!("Failed to open device file {path:?}: {err}");
+                    continue;
+                },
+            };
+            let fd = file.as_raw_fd();
+
+            // Query for device capabilities.
+            let mut data = [0; FEATURES_LEN];
+            if let Err(err) = unsafe { features(fd, &mut data) } {
+                eprintln!("Warn: Failed to query force-feedback features of {path:?}: {err}");
+                continue;
+            }
+
+            // Check if the device has the rumble capability.
+            let index = FF_RUMBLE as usize / (8 * mem::size_of::<libc::c_ulong>());
+            let offset = FF_RUMBLE as usize % (8 * mem::size_of::<libc::c_ulong>());
+            if index < FEATURES_LEN && data[index] >> offset & 1 != 0 {
+                return Some(Self { device: file });
+            }
+        }
+
+        None
     }
 
     /// Stop vibration and remove effect from device.
@@ -85,7 +144,7 @@ impl Vibrator {
     fn vibrate(&mut self, length: u16, interval: u16, count: u16) -> Result<(), String> {
         // Ignore without rumble device access.
         let mut effect = Effect {
-            effect_type: 0x50,
+            effect_type: FF_RUMBLE,
             id: -1,
             direction: 0,
             trigger: Trigger { interval: 0, button: 0 },
@@ -128,6 +187,7 @@ impl Vibrator {
     }
 }
 
+ioctl_read!(features, b'E', 0x20 + EV_FF, [libc::c_ulong; FEATURES_LEN]);
 ioctl_write_ptr!(upload_effect, b'E', 0x80, Effect);
 ioctl_write_int!(remove_effect, b'E', 0x81);
 

@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## Unreleased
 
+## Added
+
+- Automatic feedback device discovery
+
 ## Fixed
 
 - Compilation on 32 bit architectures
