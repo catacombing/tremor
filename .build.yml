@@ -1,0 +1,36 @@
+image: archlinux
+
+packages:
+  # Build system.
+  - rustup
+  # Build dependencies.
+  - fontconfig
+  - libxkbcommon
+  - wayland
+
+sources:
+  - https://git.sr.ht/~undeadleech/tremor
+
+tasks:
+  - setup: |
+      rustup set profile minimal
+      rustup default stable
+
+  - test: |
+      cd tremor
+      cargo test --workspace --all-features
+  - test-msrv: |
+      cd tremor
+      msrv=$(cat Cargo.toml | grep "rust-version" | sed 's/.*"\(.*\)".*/\1/')
+      rustup toolchain install $msrv
+      cargo +$msrv test --workspace
+
+  - lint: |
+      cd tremor
+      rustup component add clippy
+      cargo clippy --all-features -- -D warnings
+
+  - format: |
+      cd tremor
+      rustup toolchain install nightly -c rustfmt
+      cargo +nightly fmt -- --check
